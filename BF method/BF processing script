@@ -423,8 +423,8 @@ function main(workbook: ExcelScript.Workbook) {
     workbook.getApplication().calculate(ExcelScript.CalculationType.fullRebuild);
 
     const final_ulr_val = outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 3, 1, 1).getValue()
-    const final_ibnr_val = outsheet.getRange(`${ibnr_col}${bf_endrow}`).getValue()
-    const final_ultimate_val = outsheet.getRange(`${bf_ult_col}${bf_endrow}`).getValue()
+    const final_ibnr_val = outsheet.getRange(`${ibnr_col}${bf_endrow + 1}`).getValue()
+    const final_ultimate_val = outsheet.getRange(`${bf_ult_col}${bf_endrow + 1}`).getValue()
     const current_earned_uwp = premium_allvalues[premium_allvalues.length - 1][premium_allvalues[0].length - 1]
     const current_claims = claims_allvalues[claims_allvalues.length - 1][claims_allvalues[0].length - 1]
 
