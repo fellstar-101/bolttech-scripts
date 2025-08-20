@@ -1,4 +1,474 @@
-/something
-//test2.5
-3.5te0
-/something
+function main(workbook: ExcelScript.Workbook) {
+    workbook.refreshAllDataConnections();
+    console.log("Connections refreshed")
+    workbook.refreshAllPivotTables();
+    console.log("Pivottables refreshed")
+    workbook.getApplication().setCalculationMode(ExcelScript.CalculationMode.manual);
+
+    const claims_pivot = workbook.getPivotTable("ASIAUWREPORT_claims")
+    const premium_pivot = workbook.getPivotTable("ASIAUWREPORT_premiums")
+
+    const claims_allvalues = claims_pivot.getLayout().getRange().getValues() as (number | string)[][];
+    //console.log(JSON.stringify(claims_allvalues, null, 2))
+    //the .getValues() here does not include the filter fields
+    const claims_out: (string | number | null)[][] = [];
+    const ratios_out: (string | number | null)[][] = [];
+
+    const header_label = "Inception Month";
+    const header_row_idx = claims_allvalues.findIndex(row => row[0] === header_label);
+    if (header_row_idx < 0) throw new Error(`Header label ${header_label} not found`);
+
+    const now_datetime = new Date();
+    let year_mth = `${String(now_datetime.getFullYear())}-${String(now_datetime.getMonth() + 1).padStart(2, '0')}`;
+    //.getMonth() is zero indexed while .getFullYear() is not
+    //-1 because we want to estimate ULR from the previous month's data, which is complete, while current month's data is incomplete
+    //console.log(now_datetime,year_mth)
+
+    function getPreviousMonth(currstr: string) {
+      if (!/^\d{4}-\d{2}$/.test(currstr)) {
+        throw new Error(`Invalid input format for ${currstr}, expected "yyyy-mm"`)
+      }
+      const [yearstr, mthstr] = currstr.split('-')
+      let year_val = parseInt(yearstr)
+      let mth_val = parseInt(mthstr)
+      if (year_val < 2010 || year_val > 2100) {
+        throw new Error(`Year ${year_val} out of range`)
+      }
+
+      mth_val--;
+      if (mth_val === 0) {
+        mth_val = 12
+        year_val--;
+      }
+      const formatted_mth = mth_val < 10 ? `0${mth_val}` : mth_val.toString();
+      return `${year_val}-${formatted_mth}`
+    }
+
+    //initialize a list
+    const mth_list = [year_mth]
+    while (year_mth !== claims_allvalues[header_row_idx + 1][0]) {
+      year_mth = getPreviousMonth(year_mth)
+      mth_list.unshift(year_mth)
+    }
+    console.log(JSON.stringify(mth_list, null, 2))
+
+    /*    let current_row_idx = -1
+        while (current_row_idx < 0){
+          const current_row_idx = claims_allvalues.findIndex((row, idx) => idx > header_row_idx && String(row[0]) === year_mth);
+          if ()
+        }
+        //if (current_row_idx < 0) throw new Error(`current_row_idx not found (current mth)`);
+        //instead of throwing new error, we seek to now find an above row with yyyy-mm that is closest to the current mth n yr, then start from there.
+        //first build a set of yyyy-mm that is not found. If found current year_mth, then loop up from there until header_row_idx is reached. If current year_mth doesn't exist then add to the set, do year_mth =- 1, then look for it again until a current_row_idx is found, then loop from there.
+        //to build the claims_out and ratios_out, 
+        if (current_row_idx < 0){
+    
+        }
+    */
+
+    let first_found_idx = -1
+    let trunc = 2;
+    for (let r = mth_list.length - 1; r >= 0; r--) {
+      const ratios_row: (string | number | null)[] = [];
+      const current_row_idx = claims_allvalues.findIndex((row, idx) => idx > header_row_idx && String(row[0]) === mth_list[r]);
+      if (first_found_idx < 0 && current_row_idx > 0) first_found_idx = r;
+      let kept: (string | number | null)[] = [];
+      let blanks: (null)[] = [];
+
+      if (current_row_idx > 0) {
+        const curr_row = claims_allvalues[current_row_idx];
+        //if (r > header_row_idx){
+        if (trunc <= curr_row.length) {
+          kept = curr_row.slice(0, trunc); //.slice(<start>, <end non inclusive>), zero indexed, .slice(0, 0) would return an empty array []
+          blanks = Array(curr_row.length - trunc).fill(null);
+          claims_out.unshift([...kept, ...blanks]);
+          trunc++;
+        } else {
+          kept = curr_row.slice(0, curr_row.length);
+          claims_out.unshift([...kept]);
+        }
+
+        for (let i = 0; i < kept.length; i++) {
+          if (isNaN(Number(claims_allvalues[header_row_idx][i]))) {
+            ratios_row.push(curr_row[i])
+          } else if ((i + 1) < kept.length) {
+            const ratio_val = Number(curr_row[i + 1]) / Number(curr_row[i])
+            if (ratio_val <= 0) {
+              ratios_row.push(1)
+              //to clean data instead replace value to be 1, for testing purposes not doing replacement
+            } else {
+              ratios_row.push(ratio_val)
+            }
+          }
+        }
+        blanks = Array(curr_row.length - kept.length + 1).fill(null);
+        ratios_out.unshift([...ratios_row, ...blanks])
+
+        //} else {
+        //  claims_out.unshift(claims_allvalues[r])
+        //  ratios_out.unshift(claims_allvalues[r])
+        //}
+
+      } else {
+        //the yyyy-mm is not found in allvalues
+        blanks = Array(claims_allvalues[0].length - 1).fill(null)
+        claims_out.unshift([mth_list[r], ...blanks])
+        ratios_out.unshift([mth_list[r], ...blanks])
+        trunc++
+      }
+    }
+
+    for (let i = header_row_idx; i >= 0; i--) {
+      claims_out.unshift(claims_allvalues[i])
+      ratios_out.unshift(claims_allvalues[i])
+    }
+
+    const pastestartrow = 1
+    const pastestartcol = 1
+
+    const outsheet = workbook.getWorksheet("Processing");
+    if (!outsheet) throw new Error("Processing sheet not found");
+    if (outsheet.getUsedRange()) {
+      outsheet.getUsedRange().clear(ExcelScript.ClearApplyTo.all);
+    }
+    const claims_outrange = outsheet.getRangeByIndexes(pastestartrow, pastestartcol, claims_out.length, claims_out[0].length);
+    const ratios_outrange = outsheet.getRangeByIndexes(pastestartrow + claims_out.length + 1, pastestartcol, ratios_out.length, ratios_out[0].length)
+    claims_outrange.setValue(claims_out);
+    ratios_outrange.setValue(ratios_out);
+    console.log(ratios_out)
+
+    const ratios_header_row = pastestartrow + claims_out.length + 1 + 2
+    const base_endrow = pastestartrow + claims_out.length + 1 + header_row_idx + 1 + first_found_idx + 1
+    const base_startrow = base_endrow - 11 //for 12 months worth of data
+    const average_row = pastestartrow + claims_out.length + 1 + ratios_out.length + 1
+    //console.log(average_row, claims_out.length, ratios_out.length, first_found_idx)
+
+    function colToLetter(colIdx: number): string {
+      let s = "";
+      while (colIdx >= 0) {
+        s = String.fromCharCode((colIdx % 26) + 65) + s;
+        colIdx = Math.floor(colIdx / 26) - 1;
+      }
+      return s;
+    }
+
+    for (let i = 0; i < ratios_out[0].length - 1 - 1; i++) {
+      // -1 from starting on second column, -1 from final column having no valid ratio
+      //let startrow = base_startrow - i;
+      //let endrow = base_endrow - i;
+      let startrow = ratios_header_row + 1
+      let endrow = average_row - 1
+      //>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      //this is a temporary solution for when data is sparse (i.e. the first instance of valid data is too high up, in which case the two lines commented out above, which although in principle works better, now instead doesn't work for the purpose of ULR)
+      if (startrow <= ratios_header_row) startrow = ratios_header_row + 1;
+      if (endrow < startrow) break
+
+      const colidx = pastestartcol + 1 + i
+      const colLetter = colToLetter(colidx)
+      const simple_formula = `=AVERAGEA(${colLetter}${startrow}:${colLetter}${endrow})`
+      outsheet.getRangeByIndexes(average_row, colidx, 1, 1).setFormula(simple_formula);
+    }
+    outsheet.getRangeByIndexes(average_row, pastestartrow, 1, 1).setFormula('1 Yr Simple')
+    workbook.getApplication().calculate(ExcelScript.CalculationType.fullRebuild);
+
+    const aggregate_row = average_row + 1
+    for (let i = 0; i < ratios_out[0].length - 1 - 1; i++) {
+      const colidx = pastestartcol + 1 + i
+      const startcol = colToLetter(pastestartcol + 1 + i)
+      const endcol = colToLetter(pastestartcol + ratios_out[0].length - 1 - 1)
+      const aggregate_ratio_formula = `=PRODUCT(${startcol}${aggregate_row}: ${endcol}${aggregate_row})`
+      outsheet.getRangeByIndexes(aggregate_row, colidx, 1, 1).setFormula(aggregate_ratio_formula)
+    }
+    outsheet.getRangeByIndexes(aggregate_row, pastestartrow, 1, 1).setFormula('Selected Aggregate')
+    workbook.getApplication().calculate(ExcelScript.CalculationType.fullRebuild);
+
+//>>>start
+    //here we interject with a process for BF because this makes the array construction for BF much easier since the loop below already contains the required information
+    const elrsheet = workbook.getWorksheet("ELR")
+    const manual_adjust = elrsheet.getUsedRange().find("Manual Adjust?", {
+      completeMatch: true,
+      matchCase: true,
+      searchDirection: ExcelScript.SearchDirection.forward
+    }).getOffsetRange(0, 1).getValue()
+    //assume a specific format of input in the worksheet to obtain the list of years, and for each year the corresponding array/dictionary object
+    if (!manual_adjust){
+      for (const pivot of [claims_pivot, premium_pivot]){
+        //originally the idea was to make the input of A_COUNTRY_CODE automatic for HK, MO and ASIA as well, however, the issue with OLAP pivottables is that their properties cannot be reliably access using office scripts. VBA as an alternative likely works but has the limitation that it cannot be called using cloud power automate (only desktop power automate can call VBA)
+        //The issue that office scripts face is that once a connection is established after the workbook is opened (after the microsoft sign in pop up), the .gethierarchies() actions and all subsequent dependent actions fail. This is a current known limitation of office scripts regarding OLAP tables
+        //There is a possible crass workaround, which is to open the file, sign into microsoft, wait for the data to load, save the file, close the file, then reopen the file with the new data and don't sign in to microsoft to not establish the live connection for this re-opening of the file. With "Cached data", office scripts seems to be relatively functional, but if this is the case, then may as well just update the values manually. 
+      }
+    }
+
+    const elr_ref_cell = elrsheet.getUsedRange().find("ELR", {
+      completeMatch: true,
+      matchCase: true,
+      searchDirection: ExcelScript.SearchDirection.forward
+    })
+    const elr_vals = elr_ref_cell.getOffsetRange(0, 1).getSurroundingRegion().getValues()
+    //truncate elr_vals as required in testing, here we remove the first column
+    elr_vals.forEach(row => row.shift());
+    //console.log(JSON.stringify(elr_vals, null, 2))
+
+    const bf_out_pt1: (string | number | null)[][] = [];
+    bf_out_pt1.push(["Inception Month", "Latest Claim Val", "Multiplier to Reach Ult", "ELR"])
+//>>>end
+
+    const projected_claims_out: (string | number | null)[][] = [];
+    for (let r = 0; r < claims_out.length; r++) {
+      const projected_row: (string | number | null)[] = [];
+      if (r <= header_row_idx) {
+        projected_claims_out.push(claims_out[r])
+        continue;
+      }
+      const proj_row_cell_idx = claims_out[r].findIndex(cell => cell === null);
+      //console.log(proj_row_cell_idx)
+//>>>start
+      const bf_row: (string | number | null)[] = [];
+      bf_row.push(claims_out[r][0])
+      const curr_yr = String(claims_out[r][0]).trim().split("-")[0]
+      const rows_for_year = elr_vals.filter(row => String(row[0]).trim() === curr_yr)
+      //console.log(rows_for_year)
+      let elr = Number(rows_for_year[0][1])
+//>>>end
+      if (proj_row_cell_idx < 0) {
+        projected_claims_out.push(claims_out[r])
+//>>>start
+        bf_row.push(claims_out[r][claims_out[0].length-1], 1)
+//>>>end
+      } else if (proj_row_cell_idx === 1) {
+        //then the row is empty, push the entire row
+        projected_claims_out.push(claims_out[r])
+//>>>start        
+        bf_row.push(0, 0)
+//>>>end
+      } else {
+        const latest_val = claims_out[r][proj_row_cell_idx - 1]
+//>>>start
+        //here we prep bf_row before continuing with the main process, in previous lines we already defined bf_row and bf_out
+        const cl_ult_multiplier = Number(outsheet.getRangeByIndexes(aggregate_row, pastestartcol + proj_row_cell_idx - 1, 1, 1).getValue())
+        bf_row.push(latest_val, cl_ult_multiplier)
+//>>>end
+
+        let curr_val = -1
+        let aggregate_multiplier = 1
+        for (let j = 0; j < claims_out[0].length; j++) {
+          if (j < proj_row_cell_idx) {
+            projected_row.push(claims_out[r][j])
+          } else {
+            if (j === 0) {
+              curr_val = Number(claims_out[r][proj_row_cell_idx - 1 + j])
+            } else {
+              curr_val *= aggregate_multiplier
+            }
+            aggregate_multiplier *= Number(outsheet.getRangeByIndexes(average_row, pastestartcol + j - 1, 1, 1).getValue())
+            if (isNaN(Number(latest_val)) || isNaN(Number(aggregate_multiplier))) throw new Error("either latest_val or aggregate_val has the value NaN, check whether the values are correct")
+            projected_row.push(Number(latest_val) * Number(aggregate_multiplier))
+          }
+        }
+        projected_claims_out.push(projected_row)
+      }
+      bf_row.push(elr)
+      bf_out_pt1.push(bf_row)
+    }
+    //this seems to work, although the logic is not verified
+
+    const projected_claims_outrange = outsheet.getRangeByIndexes(pastestartrow + claims_out.length + 1 + ratios_out.length + 1 + 1 + 1 + 1, pastestartcol, projected_claims_out.length, projected_claims_out[0].length)
+    projected_claims_outrange.setValues(projected_claims_out)
+
+    let highlight_trunc = 2
+    const projected_claims_outrange_row = projected_claims_outrange.getRowIndex()
+    //console.log(claims_out[0].length)
+    for (let r = claims_out.length - 1; r > header_row_idx; r--) {
+      const this_row = claims_out[r]
+      if (highlight_trunc < claims_out[0].length) {
+        outsheet.getRangeByIndexes(projected_claims_outrange_row + 1 + projected_claims_out.length - highlight_trunc, pastestartcol + 1, 1, highlight_trunc - 1).getFormat().getFill().setColor("#DAF2D0")
+      } else {
+        outsheet.getRangeByIndexes(projected_claims_outrange_row + 1 + projected_claims_out.length - highlight_trunc, pastestartcol + 1, 1, claims_out[0].length - 1).getFormat().getFill().setColor("#DAF2D0")
+      }
+      highlight_trunc++;
+    }
+
+    const premium_header_label = "Inception Month"
+    const premium_allvalues = premium_pivot.getLayout().getRange().getValues() as (number | string)[][]
+    const premium_header_row_idx = premium_allvalues.findIndex(row => row[0] === premium_header_label);
+    if (header_row_idx < 0) throw new Error(`Header label ${header_label} not found`);
+
+    //create a map
+    type rowdata = (number | string)[];
+    const premium_allvalues_mth_processed: (string | number | null)[][] = [];
+    const premium_row_map = new Map<string, rowdata>();
+    for (const row of premium_allvalues) {
+      const month = row[0] as string;
+      premium_row_map.set(month, row);
+    }
+    //build the processed array following the order of mth_list
+    for (const month of mth_list) {
+      if (premium_row_map.has(month)) {
+        premium_allvalues_mth_processed.push(premium_row_map.get(month))
+      } else {
+        //create a new blank row
+        const new_row: (number | string)[] = [month, ...Array(premium_allvalues[0].length - 1).fill('')];
+        premium_allvalues_mth_processed.push(new_row)
+      }
+    }
+
+    premium_allvalues_mth_processed.push(premium_allvalues[premium_allvalues.length - 1])
+    for (let r = 0; r < premium_header_row_idx + 1; r++) {
+      premium_allvalues_mth_processed.unshift(premium_allvalues[r])
+    }
+
+    //we assume that premium_pivot has a grand total row, and that projected_claims_out has two header rows, while premium_allvalues has one header row
+    console.log(premium_allvalues_mth_processed)
+    if (projected_claims_out.length !== premium_allvalues_mth_processed.length) throw new Error(`Months for claims and premium don't match, ${projected_claims_out.length} against ${premium_allvalues_mth_processed.length}, check and verify`)
+    const ulr_out: (string | number | null)[][] = [];
+
+    let cost_sum = 0;
+    for (let r = 0; r < premium_allvalues_mth_processed.length; r++) {
+      const ulr_row: (string | number | null)[] = [];
+      if (r === 0) {
+        //we assume premium_allvalues only has 2 columns
+        ulr_out.push([premium_allvalues_mth_processed[r][0], "CL Ultimate Claims", "Earned UWP", "ULR"])
+      } else if (r < premium_allvalues_mth_processed.length - 1) {
+        const curr_row_claims = projected_claims_out[r + 1][projected_claims_out[0].length - 1]
+        ulr_out.push([premium_allvalues_mth_processed[r][0], curr_row_claims, premium_allvalues_mth_processed[r][1], Number(curr_row_claims) / Number(premium_allvalues_mth_processed[r][1])])
+        cost_sum += Number(projected_claims_out[r + 1][projected_claims_out[0].length - 1])
+      } else {
+        //r === premium_allvalues.length - 1
+        ulr_out.push([premium_allvalues_mth_processed[r][0], cost_sum, premium_allvalues_mth_processed[r][1], cost_sum / Number(premium_allvalues_mth_processed[r][1])])
+      }
+    }
+
+    const ulr_outrange = outsheet.getRangeByIndexes(pastestartrow + claims_out.length + 1 + ratios_out.length + 1 + 1 + 1 + 1 + 1, pastestartcol + projected_claims_out[0].length + 1, ulr_out.length, ulr_out[0].length)
+    ulr_outrange.setValues(ulr_out)
+
+    const themecolor = "#000000"
+    function setEdge(target: ExcelScript.Range, edge: ExcelScript.BorderIndex){
+      const b = target.getFormat().getRangeBorder(edge);
+      b.setStyle(ExcelScript.BorderLineStyle.continuous);
+      b.setWeight(ExcelScript.BorderWeight.thin);
+      b.setColor(themecolor)
+    }
+    setEdge(ulr_outrange, ExcelScript.BorderIndex.edgeRight);
+
+    //end of chain ladder
+    //start of BF (ELR)
+
+    function classifymethod(mth_list: string[], elr_vals: (number|string|boolean)[][]){
+      let allyearsbf = true;
+      let allyearscl = true;
+
+      const uniqueyears = Array.from(new Set(
+        mth_list.map(s => (s || "").toString().trim().split("-")[0])
+        //.filter(x => x) to remove falsy values, but that shouldn't be required
+      ))
+      //console.log(JSON.stringify(uniqueyears, null, 2))
+      for (const year of uniqueyears){
+        const rows_for_year = elr_vals.filter(row => String(row[0]).trim() === year)
+        if (isNaN(Number(rows_for_year[0][1])) || Number(rows_for_year[0][1]) === 0){
+          allyearsbf = false;
+        } else {
+          allyearscl = false;
+        }
+        //console.log(rows_for_year, rows_for_year[0][1], allyearsbf, allyearscl)
+        if (allyearsbf === false && allyearscl === false){
+          outsheet.getRangeByIndexes(0, 0, 1, 1).setFormula("Both BF and Chain Ladder present")
+          break;
+        }
+      }
+      if (allyearsbf === true && allyearscl === true) throw new Error ("allyearsbf and allyearscl are both true")
+      if (allyearsbf === true){
+        outsheet.getRangeByIndexes(0, 0, 1, 1).setFormula("BF Method")
+      } else if (allyearscl === true){
+        outsheet.getRangeByIndexes(0, 0, 1, 1).setFormula("Chain Ladder Method")
+      }
+      return; 
+    }
+
+    classifymethod(mth_list, elr_vals)
+
+    //now actually apply the BF method
+    //create an array with each month in month_list, as well as its latest actual value, and its corresponding expected claim amount (ELR*UWP). If the latest actual value is negative then set to 0
+    //apply the formula BF ult = C_to_date + (1-1/ADF)*expected_claims_ult to get the BF ultimate
+    //get the IBNR by BF_ult - C_to_date
+    //return the sum and the summed LR
+    const bf_pt1_outrange = outsheet.getRangeByIndexes(ulr_outrange.getRowIndex(), ulr_outrange.getColumnIndex() + ulr_out[0].length, bf_out_pt1.length, bf_out_pt1[0].length)
+    bf_pt1_outrange.setValues(bf_out_pt1)
+
+    const bf_colidx = bf_pt1_outrange.getColumnIndex() + bf_pt1_outrange.getColumnCount();
+    const bf_startrow = bf_pt1_outrange.getRowIndex() + 1
+
+    const bf_ult_col = colToLetter(bf_colidx + 2)
+    const ibnr_col = colToLetter(bf_colidx + 1)
+    const expected_claims_col = colToLetter(bf_colidx)
+    const elr_col = colToLetter(bf_colidx - 1)
+    const multiplier_col = colToLetter(bf_colidx - 2)
+    const latest_claims_col = colToLetter(bf_colidx - 3)
+    const earned_uwp_col = colToLetter(bf_colidx - 6)
+    const cl_ult_col = colToLetter(bf_colidx - 7)
+    for (let r = 1; r < bf_out_pt1.length; r++){
+      const bf_curr_row = bf_startrow + r
+      outsheet.getRangeByIndexes(bf_curr_row - 1, bf_colidx, 1, 1).setFormula(`=IF(${elr_col}${bf_curr_row} <> 0, ${earned_uwp_col}${bf_curr_row}*${elr_col}${bf_curr_row})`)
+      outsheet.getRangeByIndexes(bf_curr_row - 1, bf_colidx + 1, 1, 1).setFormula(`=IF(${expected_claims_col}${bf_curr_row} <> FALSE, (1-1/${multiplier_col}${bf_curr_row})*${expected_claims_col}${bf_curr_row})`)
+      outsheet.getRangeByIndexes(bf_curr_row - 1, bf_colidx + 2, 1, 1).setFormula(`=IF(${ibnr_col}${bf_curr_row} <> FALSE, ${ibnr_col}${bf_curr_row} + ${latest_claims_col}${bf_curr_row}, ${cl_ult_col}${bf_curr_row}`)
+      outsheet.getRangeByIndexes(bf_curr_row - 1, bf_colidx + 3, 1, 1).setFormula(`=${bf_ult_col}${bf_curr_row}/${earned_uwp_col}${bf_curr_row}`)
+    }
+    outsheet.getRangeByIndexes(bf_startrow - 1, bf_colidx, 1, 1).setFormula("ELR*UWP")
+    outsheet.getRangeByIndexes(bf_startrow - 1, bf_colidx + 1, 1, 1).setFormula("IBNR")
+    outsheet.getRangeByIndexes(bf_startrow - 1, bf_colidx + 2, 1, 1).setFormula("BF Ultimate Claims")
+    outsheet.getRangeByIndexes(bf_startrow - 1, bf_colidx + 3, 1, 1).setFormula("BF ULR")
+    const bf_endrow = bf_startrow + bf_out_pt1.length - 1
+    outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 1, 1, 1).setFormula(`=SUMIF(${ibnr_col}${bf_startrow + 1}:${ibnr_col}${bf_endrow}, ">0")`)
+    outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 2, 1, 1).setFormula(`=SUMIF(${bf_ult_col}${bf_startrow + 1}:${bf_ult_col}${bf_endrow}, ">0")`)
+    outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 3, 1, 1).setFormula(`=${bf_ult_col}${bf_endrow + 1}/${earned_uwp_col}${bf_endrow + 1}`)
+    workbook.getApplication().calculate(ExcelScript.CalculationType.fullRebuild);
+
+    const final_ulr_val = outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 3, 1, 1).getValue()
+    const final_ibnr_val = outsheet.getRange(`${ibnr_col}${bf_endrow}`).getValue()
+    const final_ultimate_val = outsheet.getRange(`${bf_ult_col}${bf_endrow}`).getValue()
+    const current_earned_uwp = premium_allvalues[premium_allvalues.length - 1][premium_allvalues[0].length - 1]
+    const current_claims = claims_allvalues[claims_allvalues.length - 1][claims_allvalues[0].length - 1]
+
+    const report_dict: Record<string, number|string|boolean> = {
+      "Reported ULR": final_ulr_val,
+      "Current Claims": current_claims,
+      "IBNR": final_ibnr_val,
+      "Ultimate Claims": final_ultimate_val,
+      "Current Earned UWP": current_earned_uwp,
+    }
+    const keys_list = Object.keys(report_dict)
+    const report_sheet = workbook.getWorksheet("ULR Output")
+    const start_range = report_sheet.getRangeByIndexes(0, 0, 1, 1)
+    start_range.getOffsetRange(1, 0).setFormula("Current")
+    start_range.getOffsetRange(2, 0).setFormula("Previous")
+
+    for (let i = 1; i <= keys_list.length; i++){
+      //maintain i as required
+      const curr_key = keys_list[i - 1]
+      start_range.getOffsetRange(0, i).setFormula(curr_key)
+      const prev_val = start_range.getOffsetRange(1, i).getValue()
+      start_range.getOffsetRange(1, i).setFormula(`${report_dict[curr_key]}`)
+      start_range.getOffsetRange(2, i).setFormula(`${prev_val}`)
+    }
+/*
+    report_sheet.getRangeByIndexes(1, 0, 1, 1).setFormula(`${final_ulr_val}`)
+
+    //to track previous and current sum claim and sum premium, for debugging purposes
+    report_sheet.getRangeByIndexes(0, 3, 1, 1).setFormula("Claims")
+    report_sheet.getRangeByIndexes(1, 2, 1, 1).setFormula("Current")
+    report_sheet.getRangeByIndexes(2, 2, 1, 1).setFormula("Previous")
+    const prev_sumclaim_val = report_sheet.getRangeByIndexes(1, 3, 1, 1).getValue()
+    report_sheet.getRangeByIndexes(1, 3, 1, 1).setFormula(`${claims_allvalues[claims_allvalues.length-1][claims_allvalues[0].length - 1]}`)
+    report_sheet.getRangeByIndexes(2, 3, 1, 1).setFormula(`${prev_sumclaim_val}`)
+    report_sheet.getRangeByIndexes(0, 4, 1, 1).setFormula("Premiums")
+    const prev_sumpremium_val = report_sheet.getRangeByIndexes(1, 4, 1, 1).getValue()
+    report_sheet.getRangeByIndexes(1, 4, 1, 1).setFormula(`${premium_allvalues[premium_allvalues.length - 1][premium_allvalues[0].length - 1]}`)
+    report_sheet.getRangeByIndexes(2, 4, 1, 1).setFormula(`${prev_sumpremium_val}`)
+    //then now to track elr used write that as well for debugging
+*/
+    start_range.getOffsetRange(0, keys_list.length + 2).setFormula("ELR Vals")
+    report_sheet.getRangeByIndexes(1, keys_list.length + 2, elr_vals.length, elr_vals[0].length).setValues(elr_vals)
+
+    workbook.getApplication().setCalculationMode(ExcelScript.CalculationMode.automatic);
+    workbook.getApplication().calculate(ExcelScript.CalculationType.fullRebuild);
+    return;
+}
