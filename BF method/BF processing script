@@ -417,7 +417,7 @@ function main(workbook: ExcelScript.Workbook) {
     outsheet.getRangeByIndexes(bf_startrow - 1, bf_colidx + 2, 1, 1).setFormula("BF Ultimate Claims")
     outsheet.getRangeByIndexes(bf_startrow - 1, bf_colidx + 3, 1, 1).setFormula("BF ULR")
     const bf_endrow = bf_startrow + bf_out_pt1.length - 1
-    outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 1, 1, 1).setFormula(`=SUMIF(${ibnr_col}${bf_startrow + 1}:${ibnr_col}${bf_endrow}, ">0")`)
+    outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 1, 1, 1).setFormula(`=IF(SUMIF(${ibnr_col}${bf_startrow + 1}:${ibnr_col}${bf_endrow}, ">0"), SUMIF(${ibnr_col}${bf_startrow + 1}:${ibnr_col}${bf_endrow}, ">0"), FALSE)`)
     outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 2, 1, 1).setFormula(`=SUMIF(${bf_ult_col}${bf_startrow + 1}:${bf_ult_col}${bf_endrow}, ">0")`)
     outsheet.getRangeByIndexes(bf_endrow, bf_colidx + 3, 1, 1).setFormula(`=${bf_ult_col}${bf_endrow + 1}/${earned_uwp_col}${bf_endrow + 1}`)
     workbook.getApplication().calculate(ExcelScript.CalculationType.fullRebuild);
@@ -450,14 +450,16 @@ function main(workbook: ExcelScript.Workbook) {
       start_range.getOffsetRange(2, i).setFormula(`${prev_val}`)
     }
 
-    const elr_report_ref = start_range.getOffsetRange(0, keys_list.length + 3)
+    const elr_report_ref = start_range.getOffsetRange(0, keys_list.length + 2)
+    //write something in the relevant cells first so that .getsurroundingregion() and .clear() works regardless of whether the format has been previously set up. The formula text can be anything and need not be what is written here in the next two lines, they are both written Prev ELR Vals here just for convenience.
+    elr_report_ref.setFormula("Prev ELR Vals")
+    elr_report_ref.getOffsetRange(0, elr_vals[0].length + 1).setFormula("Prev ELR Vals")
     const prev_elr_vals = elr_report_ref.getSurroundingRegion().getValues()
     elr_report_ref.getSurroundingRegion().clear(ExcelScript.ClearApplyTo.all)
     elr_report_ref.getOffsetRange(0, elr_vals[0].length + 1).getSurroundingRegion().clear(ExcelScript.ClearApplyTo.all)
     elr_report_ref.setFormula("ELR Vals")
-    report_sheet.getRangeByIndexes(1, keys_list.length + 3, elr_vals.length, elr_vals[0].length).setValues(elr_vals)
-    elr_report_ref.getOffsetRange(0, elr_vals[0].length + 1).setFormula("Prev ELR Vals")
-    report_sheet.getRangeByIndexes(1, keys_list.length + 3 + elr_vals[0].length + 1, prev_elr_vals.length - 1, prev_elr_vals[0].length).setValues(prev_elr_vals.slice(1))
+    report_sheet.getRangeByIndexes(1, keys_list.length + 2, elr_vals.length, elr_vals[0].length).setValues(elr_vals)
+    report_sheet.getRangeByIndexes(0, keys_list.length + 2 + elr_vals[0].length + 1, prev_elr_vals.length, prev_elr_vals[0].length).setValues(prev_elr_vals)
 
     workbook.getApplication().setCalculationMode(ExcelScript.CalculationMode.automatic);
     workbook.getApplication().calculate(ExcelScript.CalculationType.fullRebuild);
