@@ -449,24 +449,15 @@ function main(workbook: ExcelScript.Workbook) {
       start_range.getOffsetRange(1, i).setFormula(`${report_dict[curr_key]}`)
       start_range.getOffsetRange(2, i).setFormula(`${prev_val}`)
     }
-/*
-    report_sheet.getRangeByIndexes(1, 0, 1, 1).setFormula(`${final_ulr_val}`)
 
-    //to track previous and current sum claim and sum premium, for debugging purposes
-    report_sheet.getRangeByIndexes(0, 3, 1, 1).setFormula("Claims")
-    report_sheet.getRangeByIndexes(1, 2, 1, 1).setFormula("Current")
-    report_sheet.getRangeByIndexes(2, 2, 1, 1).setFormula("Previous")
-    const prev_sumclaim_val = report_sheet.getRangeByIndexes(1, 3, 1, 1).getValue()
-    report_sheet.getRangeByIndexes(1, 3, 1, 1).setFormula(`${claims_allvalues[claims_allvalues.length-1][claims_allvalues[0].length - 1]}`)
-    report_sheet.getRangeByIndexes(2, 3, 1, 1).setFormula(`${prev_sumclaim_val}`)
-    report_sheet.getRangeByIndexes(0, 4, 1, 1).setFormula("Premiums")
-    const prev_sumpremium_val = report_sheet.getRangeByIndexes(1, 4, 1, 1).getValue()
-    report_sheet.getRangeByIndexes(1, 4, 1, 1).setFormula(`${premium_allvalues[premium_allvalues.length - 1][premium_allvalues[0].length - 1]}`)
-    report_sheet.getRangeByIndexes(2, 4, 1, 1).setFormula(`${prev_sumpremium_val}`)
-    //then now to track elr used write that as well for debugging
-*/
-    start_range.getOffsetRange(0, keys_list.length + 2).setFormula("ELR Vals")
-    report_sheet.getRangeByIndexes(1, keys_list.length + 2, elr_vals.length, elr_vals[0].length).setValues(elr_vals)
+    const elr_report_ref = start_range.getOffsetRange(0, keys_list.length + 3)
+    const prev_elr_vals = elr_report_ref.getSurroundingRegion().getValues()
+    elr_report_ref.getSurroundingRegion().clear(ExcelScript.ClearApplyTo.all)
+    elr_report_ref.getOffsetRange(0, elr_vals[0].length + 1).getSurroundingRegion().clear(ExcelScript.ClearApplyTo.all)
+    elr_report_ref.setFormula("ELR Vals")
+    report_sheet.getRangeByIndexes(1, keys_list.length + 3, elr_vals.length, elr_vals[0].length).setValues(elr_vals)
+    elr_report_ref.getOffsetRange(0, elr_vals[0].length + 1).setFormula("Prev ELR Vals")
+    report_sheet.getRangeByIndexes(1, keys_list.length + 3 + elr_vals[0].length + 1, prev_elr_vals.length - 1, prev_elr_vals[0].length).setValues(prev_elr_vals.slice(1))
 
     workbook.getApplication().setCalculationMode(ExcelScript.CalculationMode.automatic);
     workbook.getApplication().calculate(ExcelScript.CalculationType.fullRebuild);
